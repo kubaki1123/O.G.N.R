@@ -1,0 +1,51 @@
+Work Log - O.G.N.R (Moduł LoRa SX1262)
+Data: [15.03.2026]
+Cel: Zintegrowanie biblioteki RadioLib (wersja z gałęzi master, v7.0+) z mikrokontrolerem Raspberry Pi Pico (C++ SDK) dla nakładki Waveshare LoRa SX1262.
+
+1. Wykonana praca
+Utworzono klasę "wrappera" MeshRadio (pliki lora_mesh.h i lora_mesh.cpp), która hermetyzuje skomplikowaną logikę biblioteki RadioLib.
+
+Zaimplementowano konstruktor klasy, który dynamicznie alokuje pamięć dla warstwy sprzętowej HAL (PicoHal), modułu (Module) oraz sterownika radia (SX1262).
+
+Zaimplementowano metodę initLoRa, która uruchamia radio ze zdefiniowanymi parametrami fali (częstotliwość, Bandwidth 125kHz, Spreading Factor 9, Coding Rate 7, Preambuła 8).
+
+Skonfigurowano plik CMakeLists.txt do poprawnego łączenia wszystkich bibliotek pobieranych z GitHuba.
+
+2. Rejestr Błędów i Rozwiązań
+Podczas konfiguracji natrafiliśmy na serię krytycznych błędów związanych ze zmianami architektonicznymi w najnowszej wersji biblioteki RadioLib:
+
+Błąd #1: Rozjazd typów danych w konstruktorze i pliku nagłówkowym
+
+Objaw: Kompilator zgłaszał błędy this declaration has no storage class or type specifier oraz expected a ';' przy definicji konstruktora w pliku .cpp.
+
+Przyczyna: Użycie skróconego typu uint oraz niezgodność typów między sygnaturą w pliku .h (np. uint8_t), a plikiem .cpp. Nowa wersja RadioLib wymuszała dodatkowo użycie pełnego typu 32-bitowego dla pinów.
+
+Rozwiązanie: Ujednolicono wszystkie typy pinów w obu plikach na uint32_t.
+
+Błąd #2: Plik niewidoczny dla kompilatora (CMake)
+
+Objaw: IntelliSense w VS Code "nie widział" bibliotek i podświetlał całą klasę na czerwono z błędami o niezdefiniowanych typach.
+
+Przyczyna: Nowy plik lora_mesh.cpp nie został dodany do listy kompilacji w systemie budowania.
+
+Rozwiązanie: Dodano lora_mesh.cpp do instrukcji add_executable w pliku CMakeLists.txt i przeładowano środowisko.
+
+Błąd #3: Odrzucanie klasy PicoHal (Największy bloker)
+
+Objaw: Kompilator (GCC) nieustannie wyrzucał błąd expected type-specifier before 'PicoHal' oraz PicoHal does not name a type, mimo poprawnego dołączenia ścieżki #include <hal/RPiPico/PicoHal.h>.
+
+Przyczyna: Biblioteka RadioLib v7+ używa zaawansowanych makr preprocesora. Plik PicoHal.h był w całości otoczony instrukcją #if defined(RADIOLIB_BUILD_RPI_PICO). Bez tej flagi,
+kompilator widział plik jako pusty. Próba załadowania flagi i plików Pico poprzez plik .h blokowała kompilację przez złą kolejność dyrektyw #include.
+
+Rozwiązanie: 1. Zastosowano polimorfizm w pliku lora_mesh.h – użyto ogólnego wskaźnika RadioLibHal* hal;, dzięki czemu plik nagłówkowy w ogóle nie musiał ładować problematycznego PicoHal.h.
+2. Zastosowano twardy override makra w pliku lora_mesh.cpp. Na samej górze dodano #define RADIOLIB_BUILD_RPI_PICO 1, a następnie w rygorystycznej kolejności załadowano SDK Pico, a po nim bibliotekę RadioLib.
+
+Błąd #4: Brakujące moduły sprzętowe (Fatal Error: hardware/pwm.h)
+
+Objaw: Błąd kompilacji wytykający brak plików nagłówkowych takich jak hardware/pwm.h.
+
+Przyczyna: Klasa PicoHal z biblioteki RadioLib używa funkcji sprzętowych (Timery, PWM, Multicore, SPI), które w domyślnym, "odchudzonym" środowisku SDK Pico nie są linkowane do projektu, aby oszczędzać pamięć.
+
+Rozwiązanie: Rozszerzono sekcję target_link_libraries w pliku CMakeLists.txt o brakujące moduły: hardware_spi, hardware_pwm, hardware_timer, hardware_clocks, pico_multicore.
+
+Obecny status projektu: Konfiguracja sprzętowa (HAL) oraz kompilacja kodu zakończone 100% sukcesem. Metoda initLoRa jest gotowa do testów na fizycznym sprzęcie.
