@@ -49,3 +49,60 @@ Przyczyna: Klasa PicoHal z biblioteki RadioLib używa funkcji sprzętowych (Time
 Rozwiązanie: Rozszerzono sekcję target_link_libraries w pliku CMakeLists.txt o brakujące moduły: hardware_spi, hardware_pwm, hardware_timer, hardware_clocks, pico_multicore.
 
 Obecny status projektu: Konfiguracja sprzętowa (HAL) oraz kompilacja kodu zakończone 100% sukcesem. Metoda initLoRa jest gotowa do testów na fizycznym sprzęcie.
+
+Work Log - O.G.N.R (Moduł Serwera TCP / Gateway)
+Data: [16.03.2026]
+Cel: Zaprojektowanie i wdrożenie serwera TCP (Gatewaya) na mikrokontrolerze Raspberry Pi Pico 2 W (RP2350), który będzie odbierał komendy z aplikacji klienckiej przez Wi-Fi i przekazywał je do modułu LoRa.
+
+1. Wykonana praca
+Plan Architektury: Ustalono protokół komunikacji oparty na czystym TCP. Klient (np. aplikacja na PC/telefon) łączy się z serwerem i wysyła komendy w formacie Odbiorca:[Wiadomość] (np. BOB:czesc) oraz komendy
+ systemowe (np. INFO).
+
+Implementacja klasy Server_tcp: Utworzono pliki server.h i server.cpp.
+
+Integracja biblioteki lwIP: Podpięto niskopoziomową bibliotekę sieciową (Lightweight IP) wbudowaną w SDK Pico.
+
+Most C/C++: Zaimplementowano statyczne funkcje callback (on_connect, on_recv), które są wywoływane przez surowy kod C biblioteki lwIP. Użyto mechanizmu tcp_arg(pcb, this), aby przemycić wskaźnik do obiektu
+ C++ (umożliwiając dostęp do logiki klasy z poziomu statycznych callbacków).
+
+2. Rejestr Błędów i Rozwiązań
+Błąd #1: Nieznane typy lwIP (err_t is undefined)
+
+Objaw: IntelliSense i kompilator nie widziały podstawowych typów biblioteki sieciowej, mimo dołączenia #include "lwip/tcp.h".
+
+Przyczyna: Brak aktywacji sterowników Wi-Fi dla płytki w systemie CMake oraz brak "klucza głównego" architektury w pliku nagłówkowym.
+
+Rozwiązanie: 1. Do server.h dodano #include "pico/cyw43_arch.h" przed plikami lwIP.
+2. Do CMakeLists.txt dodano bibliotekę pico_cyw43_arch_lwip_threadsafe_background.
+
+Błąd #2: Awaria CMake (Exit code 1) przy przejściu na Pico W
+
+Objaw: CMake przerywał konfigurację z krytycznym błędem, nie generując plików kompilacji.
+
+Przyczyna: Literówka w nazwie gałęzi Git dla modułu RadioLib (Master zamiast master – Git jest wrażliwy na wielkość liter) oraz zduplikowane wpisy target_link_libraries.
+
+Rozwiązanie: Poprawiono skrypt pobierający zawartość FetchContent, usunięto duplikaty oraz jawnie ustawiono architekturę płytki na pico2_w za pomocą zmiennej PICO_BOARD.
+
+Błąd #3: Brak programu budującego Ninja (Fatalna awaria środowiska)
+
+Objaw: Logi z outputu pokazywały: CMake was unable to find a build program corresponding to "Ninja".
+
+Przyczyna: Instalator rozszerzenia Raspberry Pi Pico dla VS Code w systemie Windows "zgubił" (nie pobrał) pliku wykonywalnego systemu Ninja, na którym opiera się kompilacja.
+
+Rozwiązanie (Ręczna naprawa środowiska): Pobrano plik ninja-win.zip bezpośrednio z repozytorium GitHub twórców. Wyciągnięto plik ninja.exe i wklejono go do ukrytego folderu narzędzi 
+SDK (.pico-sdk\cmake\v3.31.5\bin\). Następnie wyczyszczono pamięć podręczną kompilatora (Delete Cache and Reconfigure).
+
+Błąd #4: "Histeryzujący" IntelliSense (Czerwone wężyki przy 100% sprawnym kodzie)
+
+Objaw: Edytor kodu podświetlał na czerwono standardowe funkcje (np. std::cout lub zdefiniowane typy), podczas gdy kompilator budował plik bez błędów.
+
+Rozwiązanie: Usunięcie całego folderu build, reset okna programu (Reload Window) i wymuszenie pełnej rekonfiguracji CMake, co zmusiło VS Code do odświeżenia ścieżek do bibliotek C++.
+
+Obecny status projektu: Moduł radia (LoRa) oraz serwer TCP kompilują się z sukcesem. Silnik serwera jest gotowy do przyjmowania połączeń sieciowych.
+
+3. Plan na kolejną sesję
+Aktywacja modułu Wi-Fi (układu CYW43) z poziomu funkcji main().
+
+Stworzenie pętli głównej parsującej tekst (INFO, oddzielanie odbiorcy od treści).
+
+Dodanie mechanizmu szyfrowania przesyłanego tekstu.

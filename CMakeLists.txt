@@ -40,7 +40,7 @@ include(FetchContent)
 FetchContent_Declare(
     RadioLib
     GIT_REPOSITORY https://github.com/jgromes/RadioLib.git
-    GIT_TAG        Master
+    GIT_TAG        master
 )
 
 # Rozkazujemy ją pobrać i przygotować do użycia
@@ -48,7 +48,7 @@ FetchContent_MakeAvailable(RadioLib)
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(O.G.N.R O.G.N.R.cpp lora_mesh.cpp)
+add_executable(O.G.N.R O.G.N.R.cpp lora_mesh.cpp server.cpp)
 
 pico_set_program_name(O.G.N.R "O.G.N.R")
 pico_set_program_version(O.G.N.R "0.1")
@@ -66,6 +66,7 @@ target_link_libraries(O.G.N.R
     hardware_timer 
     hardware_clocks 
     pico_multicore
+    pico_cyw43_arch_lwip_threadsafe_background
 )
 
 # Add the standard include files to the build
@@ -73,11 +74,6 @@ target_include_directories(O.G.N.R PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
 )
 
-# Add any user requested libraries
-target_link_libraries(O.G.N.R 
-        hardware_spi
-        pico_cyw43_arch_lwip_threadsafe_background
-        )
 
 pico_add_extra_outputs(O.G.N.R)
 
