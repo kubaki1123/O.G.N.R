@@ -2,6 +2,7 @@
 #include<iostream>
 #include<string>
 #include<vector>
+#include<map>
 #include "pico/cyw43_arch.h"
 #include "lwip/err.h"
 #include "lwip/pbuf.h"
@@ -17,9 +18,11 @@ namespace server{
 
         private:
             struct tcp_pcb* server_pcb;//struktura trzymajaca glowne poloczenie servera 
-
-            void process_incoming_data(std::string data);
+            std::map<struct tcp_pcb*, std::string> klienci;
+            void process_incoming_data(std::string data,struct tcp_pcb* client_pcb);
             std::string encrypt_data(std::string text);
+            void send_to_client(struct tcp_pcb* client_pcb,std::string message);
+
 
             // --- CALLBACKI lwIP (Muszą być static!) ---
             static err_t on_connect(void *arg, struct tcp_pcb *newpcb, err_t err);
