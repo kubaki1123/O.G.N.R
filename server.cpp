@@ -89,7 +89,7 @@ namespace server{
         }
 
         if (klienci[client_pcb]==""){
-            klienci[client_pcb] == data;
+            klienci[client_pcb] = data;
             std::cout<<"[SYSTEM] zalogowano nowego uzytkownika:"<<data<<std::endl;
             send_to_client(client_pcb, "[SYSTEM] Witaj " + data + "! Zalogowano pomyslnie w sieci LoRa.");
             return;
@@ -153,10 +153,7 @@ namespace server{
 
     }
 
-    std::string Server_tcp::encrypt_data(std::string text) {
-        // Pusty szkielet dla kryptografii
-        return text; 
-    }
+
     
 
     

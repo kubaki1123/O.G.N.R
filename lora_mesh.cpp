@@ -64,10 +64,14 @@ namespace lora_mesh {
     }
 
     
-    void MeshRadio::send(std::string wiadomosc) {
-        std::cout<<"wysylam:"<<wiadomosc<<"..."<<std::endl;
+    void MeshRadio::send(MeshPacket& packet) {
+        std::cout<<"wysylam:"<<packet.payload<<"..."<<std::endl;
 
-        int state = radio->transmit((uint8_t*)wiadomosc.c_str(),wiadomosc.length());
+        size_t rozmiar_do_nadania = sizeof(MeshPacket)- sizeof(packet.payload) + packet.payload_len;
+
+        //TODO wywolac encrypt_payload jak zostanie stworzone 
+
+        int state = radio->transmit((uint8_t*)&packet,rozmiar_do_nadania);
 
         if(state == RADIOLIB_ERR_NONE){
             std::cout<<"wiadomosc wyslana pomyslnie"<<std::endl;
@@ -79,23 +83,26 @@ namespace lora_mesh {
         radio->startReceive();
     }
 
-    std::string MeshRadio::receive() {
-        std::string odebrana_wiadomosc ="";
+    MeshPacket MeshRadio::receive() {
+        MeshPacket received_payload= {};
         if (check_DIO1()==true){
             size_t dlugosc = radio->getPacketLength();// Najpierw pytamy radio, ile znaków w ogóle do nas przyszło
-            uint8_t bufor[256]={0};//tworzymy puste pudelko na bajty
+            uint8_t bufor[sizeof(MeshPacket)]={0};//tworzymy puste pudelko na bajty
 
             int state = radio->readData(bufor,dlugosc);//ladujemy dane do pudelka
 
             if (state == RADIOLIB_ERR_NONE) {
-                odebrana_wiadomosc = std::string((char*)bufor,dlugosc);
-                std::cout << "Odebrano: " << odebrana_wiadomosc << std::endl;
+                memcpy(&received_payload,bufor,dlugosc);
+                std::cout << "Odebrano: " << received_payload.payload << std::endl;
             } else {
                 std::cout << "Odebrano uszkodzony pakiet, kod: " << state << std::endl;
             }
             radio->startReceive();
         }
-        return odebrana_wiadomosc;
+
+        //TODO: wywolac decrypt_payload
+
+        return received_payload;
     }
 
     bool MeshRadio::check_DIO1() {
