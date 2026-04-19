@@ -2,9 +2,9 @@
 
 namespace server{
 
-    Server_tcp::Server_tcp()//konstruktor upewniamy sie ze server_pcb jest pusty 
+    Server_tcp::Server_tcp(lora_mesh::MeshRadio* radio)//konstruktor upewniamy sie ze server_pcb jest pusty 
+    :server_pcb(nullptr),radio(radio)
     {
-        server_pcb = nullptr;
     }
     
     bool Server_tcp::start_server(uint32_t port){
@@ -29,7 +29,75 @@ namespace server{
         std::cout << "[ OK ] Serwer TCP nasluchuje na polaczenia!" << std::endl;
         return true;
     }
-// --- CALLBACKI LwIP (Wywoływane automatycznie przez system w tle) ---
+    void Server_tcp::deliver_to_clients(lora_mesh::MeshPacket& packet) {
+        if (packet.type == lora_mesh::PACKET_TYPE_INFO_REQ) {
+            // Ktoś pyta o naszą listę — odpowiedz
+            std::string lista = "";
+            for (const auto& para : nick_do_id) {
+                lista += para.first + ":" + std::to_string(para.second) + ",";
+            }
+
+            lora_mesh::MeshPacket rsp = {};
+            rsp.type = lora_mesh::PACKET_TYPE_INFO_RSP;
+            rsp.src_id = node_id;
+            rsp.dst_id = packet.src_id;
+            rsp.msg_id = ++msg_counter;
+            rsp.time_to_live = 3;
+            rsp.payload_len = lista.length();
+            memcpy(rsp.payload, lista.c_str(), rsp.payload_len);
+
+            radio->send(rsp);
+            return;
+        }
+
+        if (packet.type == lora_mesh::PACKET_TYPE_INFO_RSP) {
+            // Dostaliśmy listę od zdalnego węzła — parsuj i zapisz
+            std::string tresc((char*)packet.payload, packet.payload_len);
+            std::string wynik = "[SYSTEM] uzytkownicy zdalni (wez." 
+                            + std::to_string(packet.src_id) + "): " + tresc;
+
+            // Parsuj "NICK:ID,NICK:ID," i zapisz do nick_do_id
+            size_t pos = 0;
+            while (pos < tresc.size()) {
+                size_t przecinek = tresc.find(',', pos);
+                if (przecinek == std::string::npos) break;
+                std::string para = tresc.substr(pos, przecinek - pos);
+                size_t dwukropek = para.find(':');
+                if (dwukropek != std::string::npos) {
+                    std::string nick = para.substr(0, dwukropek);
+                    uint8_t id = (uint8_t)std::stoi(para.substr(dwukropek + 1));
+                    nick_do_id[nick] = id;
+                }
+                pos = przecinek + 1;
+            }
+
+            // Odeślij wynik do klienta który pytał
+            if (info_requester_pcb != nullptr) {
+                send_to_client(info_requester_pcb, wynik);
+                info_requester_pcb = nullptr;
+            }
+            return;
+        }
+
+        // Zwykła wiadomość — dotychczasowa logika
+        std::string tresc((char*)packet.payload, packet.payload_len);
+        std::string wiadomosc = "[src:" + std::to_string(packet.src_id) + "] " + tresc;
+
+        if (packet.dst_id == 0xFF || packet.dst_id == 0xFE) {
+            for (const auto& para : klienci) {
+                if (!para.second.empty()) send_to_client(para.first, wiadomosc);
+            }
+        } else {
+            std::string odbiorca = tresc.substr(0, tresc.find(':'));
+            auto it = nick_do_pcb.find(odbiorca);
+            if (it != nick_do_pcb.end()) {
+                send_to_client(it->second, wiadomosc);
+            } else {
+                printf("[INFO] Odbiorca %s nie jest lokalny\n", odbiorca.c_str());
+            }
+        }
+    }
+    // --- CALLBACKI LwIP (Wywoływane automatycznie przez system w tle) ---
 
     err_t Server_tcp::on_connect(void *arg, struct tcp_pcb *newpcb, err_t err) {
         if (err != ERR_OK || newpcb == nullptr) {
@@ -54,6 +122,8 @@ namespace server{
         if (p == nullptr) {
             std::cout<< "[TCP] Uzytkownik sie rozlaczyl." << std::endl;
             if (serwer != nullptr) {
+                std::string nick = serwer->klienci[tpcb];
+                serwer->nick_do_pcb.erase(nick);
                 serwer->klienci.erase(tpcb); // usuwa uzytkownikow ktorzy rozloczyli sie z siecia
             }
             tcp_close(tpcb);
@@ -91,6 +161,8 @@ namespace server{
         if (klienci[client_pcb]==""){
             klienci[client_pcb] = data;
             std::cout<<"[SYSTEM] zalogowano nowego uzytkownika:"<<data<<std::endl;
+            nick_do_pcb[data] = client_pcb;
+            nick_do_id[data] = next_id++;
             send_to_client(client_pcb, "[SYSTEM] Witaj " + data + "! Zalogowano pomyslnie w sieci LoRa.");
             return;
         }
@@ -108,30 +180,62 @@ namespace server{
             message = "";
         }
 
-        if(command == "INFO"){
-            std::cout<<"[SYSTEM]"<<nadawca<< "pyta o liste urzytkownikow podlaczonych do sieci"<<std::endl;
-            
-            std::string lista_lokalnie = "[SYSTEM] obecni uzytkownicy lokalnie:";
-            for(const auto& para:klienci){
-                if(!para.second.empty()){
-                    lista_lokalnie+=para.second + ",";
-                }
+        if (command == "INFO") {
+            // 1. Wyślij lokalną listę do klienta który pytał
+            std::string lista = "[SYSTEM] uzytkownicy lokalni: ";
+            for (const auto& para : klienci) {
+                if (!para.second.empty()) lista += para.second + ",";
             }
+            send_to_client(client_pcb, lista);
 
-           send_to_client(client_pcb,lista_lokalnie);
+            // 2. Zapamiętaj kto pytał (żeby odesłać odpowiedź zdalną gdy przyjdzie)
+            info_requester_pcb = client_pcb;
 
-            // TODO: Zbudowanie ramki systemowej (np. "SYS_REQ_INFO")
-            // TODO: Wyslanie ramki przez radio.send() w eter do drugiego Pico
-           
-            return; 
+            // 3. Wyślij INFO_REQ przez radio
+            lora_mesh::MeshPacket req = {};
+            req.type = lora_mesh::PACKET_TYPE_INFO_REQ;
+            req.src_id = node_id;
+            req.dst_id = 0xFF;
+            req.msg_id = ++msg_counter;
+            req.time_to_live = 3;
+            req.payload_len = 0; // brak treści — samo zapytanie
+
+            radio->send(req);
+            return;
         }
         else if(command == "ALL"){
             std::cout<<"wysylanie wiadomosci do wszystkich"<<std::endl;
+            lora_mesh::MeshPacket packet={};
+            msg_counter++;
+            packet.src_id = node_id;
+            packet.dst_id = 0xFF;
+            packet.msg_id = msg_counter;
+            packet.time_to_live=3;
 
+            std::string tresc = nadawca +":"+ message;
+            packet.payload_len = tresc.length();
+            memcpy(packet.payload,tresc.c_str(),packet.payload_len);
+
+            radio->send(packet);
         }
         else{
             std::cout<<"prywatna wiadomosc do"<<command<<std::endl;
+            // Sprawdź czy odbiorca jest znany (lokalnie lub przez sieć)
+            auto it = nick_do_id.find(command);
+            uint8_t dst = (it != nick_do_id.end()) ? it->second : 0xFE; // 0xFE = nieznany
 
+            lora_mesh::MeshPacket packet = {};
+            msg_counter++;
+            packet.src_id = nick_do_id[nadawca]; // ID nadawcy
+            packet.dst_id = dst;
+            packet.msg_id = msg_counter;
+            packet.time_to_live = 3;
+
+            std::string tresc = command + ":" + message; // "BOB:czesc"
+            packet.payload_len = tresc.length();
+            memcpy(packet.payload, tresc.c_str(), packet.payload_len);
+
+            radio->send(packet);
         }
     
 

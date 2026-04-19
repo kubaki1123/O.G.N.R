@@ -57,6 +57,8 @@ pico_set_program_version(O.G.N.R "0.1")
 pico_enable_stdio_uart(O.G.N.R 0)
 pico_enable_stdio_usb(O.G.N.R 1)
 
+
+target_include_directories(O.G.N.R PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Add the standard library to the build
 target_link_libraries(O.G.N.R 
     pico_stdlib 
@@ -67,6 +69,7 @@ target_link_libraries(O.G.N.R
     hardware_clocks 
     pico_multicore
     pico_cyw43_arch_lwip_threadsafe_background
+    pico_mbedtls
 )
 
 # Add the standard include files to the build

@@ -6,18 +6,21 @@
 
 #include <RadioLib.h> // Wgrywamy główny trzon biblioteki, aby kompilator poznał bazowe klasy (np. RadioLibHal)
 
-
 namespace lora_mesh {
         //struktura pakietu
     struct MeshPacket{
+        uint8_t type;
         uint8_t src_id;
         uint8_t dst_id;
         uint8_t msg_id;
         uint8_t time_to_live;
         uint8_t payload_len;
-        uint8_t payload[216]; 
+        uint8_t payload[215]; 
     };
 
+    constexpr uint8_t PACKET_TYPE_MSG      = 0;
+    constexpr uint8_t PACKET_TYPE_INFO_REQ = 1;
+    constexpr uint8_t PACKET_TYPE_INFO_RSP = 2;
     // Klasa MeshRadio to nasz "wrapper" (opakowanie) na skomplikowaną bibliotekę RadioLib.
     class MeshRadio {
         public:

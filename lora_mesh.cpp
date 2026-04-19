@@ -13,8 +13,18 @@
 #include <RadioLib.h>
 #include <hal/RPiPico/PicoHal.h>
 
+//w pliku sciaganym z biblioteki radiolib odnoszacej sie do picohal nie bylo wypelnionej klasy tone 
+void PicoHal::tone(uint32_t pin, unsigned int frequency, unsigned long duration) {
+    (void)pin;
+    (void)frequency;
+    (void)duration;
+    
+}
+
 // 4. Na samym końcu ładujemy nasz własny nagłówek, który z tego wszystkiego skorzysta.
 #include "lora_mesh.h"
+
+#include "mbedtls/aes.h"
 
 namespace lora_mesh {
 
@@ -69,7 +79,7 @@ namespace lora_mesh {
 
         size_t rozmiar_do_nadania = sizeof(MeshPacket)- sizeof(packet.payload) + packet.payload_len;
 
-        //TODO wywolac encrypt_payload jak zostanie stworzone 
+        encrypt_payload(packet.payload,packet.payload_len,packet.msg_id,packet.src_id);
 
         int state = radio->transmit((uint8_t*)&packet,rozmiar_do_nadania);
 
@@ -93,6 +103,7 @@ namespace lora_mesh {
 
             if (state == RADIOLIB_ERR_NONE) {
                 memcpy(&received_payload,bufor,dlugosc);
+                decrypt_payload(received_payload.payload,received_payload.payload_len,received_payload.msg_id,received_payload.src_id);
                 std::cout << "Odebrano: " << received_payload.payload << std::endl;
             } else {
                 std::cout << "Odebrano uszkodzony pakiet, kod: " << state << std::endl;
@@ -100,13 +111,50 @@ namespace lora_mesh {
             radio->startReceive();
         }
 
-        //TODO: wywolac decrypt_payload
-
         return received_payload;
     }
 
     bool MeshRadio::check_DIO1() {
         return gpio_get(PIN_DIO1_private);
     }
+
+    void MeshRadio::decrypt_payload(uint8_t *payload, size_t len, uint8_t msg_id, uint8_t src_id){
+        uint8_t nonce[16]={0};
+        nonce[0]=msg_id;
+        nonce[1]=src_id;
+
+        size_t nc_off = 0;
+        uint8_t stream_block[16] = {0};
+        
+        mbedtls_aes_context ctx;//inicjalizacja AES
+        mbedtls_aes_init(&ctx);
+
+        mbedtls_aes_setkey_enc(&ctx,SUPER_SPECIAL_ENCRYPTION_KEY,128);
+
+        mbedtls_aes_crypt_ctr(&ctx,len,&nc_off,nonce,stream_block,payload,payload);
+
+        mbedtls_aes_free(&ctx);
+    }
+
+    void MeshRadio::encrypt_payload(uint8_t* payload, size_t len, uint8_t msg_id, uint8_t src_id){
+        uint8_t nonce[16]={0};
+        nonce[0]=msg_id;
+        nonce[1]=src_id;
+
+        size_t nc_off = 0;
+        uint8_t stream_block[16] = {0};
+        
+        mbedtls_aes_context ctx;//inicjalizacja AES
+        mbedtls_aes_init(&ctx);
+
+        mbedtls_aes_setkey_enc(&ctx,SUPER_SPECIAL_ENCRYPTION_KEY,128);
+
+        mbedtls_aes_crypt_ctr(&ctx,len,&nc_off,nonce,stream_block,payload,payload);
+
+        mbedtls_aes_free(&ctx);
+
+    }
+
+
 
 }

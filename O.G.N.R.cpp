@@ -2,8 +2,10 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "pico/cyw43_arch.h"
+#include "lwip/ip4_addr.h"
+#include "lwip/netif.h"
 #include "lora_mesh.h"
-
+#include "server.h"
 // SPI Defines
 #define SPI_PORT spi1
 #define PIN_MISO 12 //tym pasem magistrali wiadomosci wracaja z lora do pico (master in slave out)
@@ -39,9 +41,28 @@ int main()
     // gpio_set_dir i gpio_put konfiguruja pin CS domyslnmie ustawiaja na nim stan wysoki mówiący "Module LoRa narazie nic od ciebie nie chce mozesz spac"
    
     
-    cyw43_arch_enable_ap_mode("O.G.N.R.1","123456789",CYW43_AUTH_WPA2_MIXED_PSK);// uruchamia mobilny access point z nazwa sieci O.G.N.R.1 i hasłem 123456789 
+    cyw43_arch_enable_ap_mode("O.G.N.R.1","123456789",CYW43_AUTH_WPA2_MIXED_PSK);// uruchamia mobilny access point z nazwa sieci O.G.N.R.1 i hasłem 123456789
+    ip4_addr_t ip, mask, gw;
+    ip4addr_aton("192.168.4.1", &ip);
+    ip4addr_aton("255.255.255.0", &mask);
+    ip4addr_aton("192.168.4.1", &gw);
+    netif_set_addr(netif_default, &ip, &mask, &gw);
     printf("Access Point O.G.N.R.1 został uruchomiony\n");
+
+
+    lora_mesh::MeshRadio radio(PIN_CS, PIN_DIO1, PIN_RESET, PIN_BUSY);
+    server::Server_tcp server(&radio); 
+
+    radio.initLoRa(868.0,22,0x44);
+    server.start_server(8080);
+
     while (true) {
-        sleep_ms(1000);
+        cyw43_arch_poll();
+        lora_mesh::MeshPacket packet = radio.receive();
+        if (packet.payload_len > 0|| packet.type!=0){
+            printf("[LoRa] Odebrano pakiet od src_id:\t", packet.type, packet.src_id);
+            server.deliver_to_clients(packet);
+        }
+        sleep_ms(10);
     }   
 }
