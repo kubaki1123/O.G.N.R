@@ -48,7 +48,7 @@ FetchContent_MakeAvailable(RadioLib)
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(O.G.N.R O.G.N.R.cpp lora_mesh.cpp server.cpp)
+add_executable(O.G.N.R O.G.N.R.cpp lora_mesh.cpp server.cpp dhcpserver.c)
 
 pico_set_program_name(O.G.N.R "O.G.N.R")
 pico_set_program_version(O.G.N.R "0.1")

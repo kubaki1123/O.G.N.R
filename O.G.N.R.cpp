@@ -4,8 +4,10 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/netif.h"
+#include "dhcpserver.h"
 #include "lora_mesh.h"
 #include "server.h"
+
 // SPI Defines
 #define SPI_PORT spi1
 #define PIN_MISO 12 //tym pasem magistrali wiadomosci wracaja z lora do pico (master in slave out)
@@ -21,7 +23,7 @@
 int main()
 {
     stdio_init_all();// odpala komunikacje po kablu miedzy komputerem a raspberry 
-
+    sleep_ms(3000);
    
     if (cyw43_arch_init()) {    //cyw43_arch_init budzi układ wi-fi na płytce pico ze snu jezeli z jakiegos poodu jest on uszkodzony wyswietli sie blad 
         printf("Wi-Fi init failed\n");
@@ -42,10 +44,16 @@ int main()
    
     
     cyw43_arch_enable_ap_mode("O.G.N.R.1","123456789",CYW43_AUTH_WPA2_MIXED_PSK);// uruchamia mobilny access point z nazwa sieci O.G.N.R.1 i hasłem 123456789
-    ip4_addr_t ip, mask, gw;
-    ip4addr_aton("192.168.4.1", &ip);
-    ip4addr_aton("255.255.255.0", &mask);
-    ip4addr_aton("192.168.4.1", &gw);
+    ip4_addr_t gw, mask;
+    IP4_ADDR(&gw, 192, 168, 4, 1);
+    IP4_ADDR(&mask, 255, 255, 255, 0);
+
+    dhcp_server_t dhcp_server;
+    dhcp_server_init(&dhcp_server, &gw, &mask);
+    printf("Serwer DHCP uruchomiony\n");
+
+    ip4_addr_t ip;
+    IP4_ADDR(&ip, 192, 168, 4, 1);
     netif_set_addr(netif_default, &ip, &mask, &gw);
     printf("Access Point O.G.N.R.1 został uruchomiony\n");
 
@@ -60,7 +68,7 @@ int main()
         cyw43_arch_poll();
         lora_mesh::MeshPacket packet = radio.receive();
         if (packet.payload_len > 0|| packet.type!=0){
-            printf("[LoRa] Odebrano pakiet od src_id:\t", packet.type, packet.src_id);
+            printf("[LoRa] Odebrano pakiet type:%d src_id:%d\n", packet.type, packet.src_id);
             server.deliver_to_clients(packet);
         }
         sleep_ms(10);
