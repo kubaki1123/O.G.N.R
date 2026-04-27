@@ -26,6 +26,7 @@ void PicoHal::tone(uint32_t pin, unsigned int frequency, unsigned long duration)
 
 #include "mbedtls/aes.h"
 
+
 namespace lora_mesh {
 
     // IMPLEMENTACJA KONSTRUKTORA
@@ -64,6 +65,7 @@ namespace lora_mesh {
         if(state == RADIOLIB_ERR_NONE){
             std::cout<<"[OK] Radio gotowe do pracy"<<std::endl;
             radio->startReceive();
+            
             return true;
         }
         else{
@@ -78,6 +80,7 @@ namespace lora_mesh {
         std::cout<<"wysylam:"<<packet.payload<<"..."<<std::endl;
 
         size_t rozmiar_do_nadania = sizeof(MeshPacket)- sizeof(packet.payload) + packet.payload_len;
+        printf("[DEBUG] Wysylam %d bajtow, payload_len=%d\n", rozmiar_do_nadania, packet.payload_len);
 
         encrypt_payload(packet.payload,packet.payload_len,packet.msg_id,packet.src_id);
 
@@ -96,11 +99,12 @@ namespace lora_mesh {
     MeshPacket MeshRadio::receive() {
         MeshPacket received_payload= {};
         if (check_DIO1()==true){
+            
             size_t dlugosc = radio->getPacketLength();// Najpierw pytamy radio, ile znaków w ogóle do nas przyszło
             uint8_t bufor[sizeof(MeshPacket)]={0};//tworzymy puste pudelko na bajty
 
             int state = radio->readData(bufor,dlugosc);//ladujemy dane do pudelka
-
+            printf("[DEBUG] Odebrano %d bajtow\n", dlugosc);
             if (state == RADIOLIB_ERR_NONE) {
                 memcpy(&received_payload,bufor,dlugosc);
                 decrypt_payload(received_payload.payload,received_payload.payload_len,received_payload.msg_id,received_payload.src_id);
@@ -119,24 +123,34 @@ namespace lora_mesh {
     }
 
     void MeshRadio::decrypt_payload(uint8_t *payload, size_t len, uint8_t msg_id, uint8_t src_id){
-        uint8_t nonce[16]={0};
-        nonce[0]=msg_id;
-        nonce[1]=src_id;
+        uint8_t nonce[16]={0};// NONCE (Number Used Once)liczba jednorazowa 16 bajtow sprawia ze ten sam tekst zaszyfrowany dwuktornie daje rozne wyniki 
+        nonce[0]=msg_id;//unikalny numer wiadomosci
+        nonce[1]=src_id;//id nadawcy 
 
-        size_t nc_off = 0;
-        uint8_t stream_block[16] = {0};
+        size_t nc_off = 0;// offset w strumieniu klucza mbedTLS aktualizuje te zmienna zeby mozna bylo szyfrowac fragmentami ale my chcemy zaszyfrowac caly payload wiec zaczynamy od 0
+        uint8_t stream_block[16] = {0};// wewnetrzny bufor mbedTLS na blok strumienia klucza 
         
         mbedtls_aes_context ctx;//inicjalizacja AES
-        mbedtls_aes_init(&ctx);
+        mbedtls_aes_init(&ctx);// ctx - struktura przechowywująca rozszerzony klucz AES-128 rozszerza klucz do 176 bajtów mbedtls_aes_init rezerwuje na to pamięć 
 
-        mbedtls_aes_setkey_enc(&ctx,SUPER_SPECIAL_ENCRYPTION_KEY,128);
+        mbedtls_aes_setkey_enc(&ctx,SUPER_SPECIAL_ENCRYPTION_KEY,128);//ładuje klucz i oblicza key schedule w trybie CTR używamy zawsze setkey_enc nawet do deszyfrowania 
 
         mbedtls_aes_crypt_ctr(&ctx,len,&nc_off,nonce,stream_block,payload,payload);
+        /*
+        &ctx,           // kontekst z kluczem
+        len,            // ile bajtów przetworzyć
+        &nc_off,        // offset (aktualizowany przez mbedTLS)
+        nonce,          // nasz nonce (msg_id + src_id + zera)
+        stream_block,   // wewnętrzny bufor bloku
+        payload,        // wejście: jawny tekst (lub zaszyfrowany przy deszyfrowaniu)
+        payload         // wyjście: TAKI SAM wskaźnik = szyfrowanie "w miejscu"
+                        // nadpisuje payload zaszyfrowanymi danymi bez dodatkowej pamięci
+        */
 
-        mbedtls_aes_free(&ctx);
+        mbedtls_aes_free(&ctx);// zwalnia pamięć key schedule ważne na mikrokontlorerze z tak małą ilośćia pamięci RAM 
     }
 
-    void MeshRadio::encrypt_payload(uint8_t* payload, size_t len, uint8_t msg_id, uint8_t src_id){
+    void MeshRadio::encrypt_payload(uint8_t* payload, size_t len, uint8_t msg_id, uint8_t src_id){// encrypt i decryp działają w identyczny sposób 
         uint8_t nonce[16]={0};
         nonce[0]=msg_id;
         nonce[1]=src_id;

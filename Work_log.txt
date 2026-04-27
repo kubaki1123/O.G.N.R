@@ -1,108 +1,218 @@
-Work Log - O.G.N.R (Moduł LoRa SX1262)
-Data: [15.03.2026]
-Cel: Zintegrowanie biblioteki RadioLib (wersja z gałęzi master, v7.0+) z mikrokontrolerem Raspberry Pi Pico (C++ SDK) dla nakładki Waveshare LoRa SX1262.
+"""# Work Log — O.G.N.R (Off-Grid Node Radio)
+### Projekt: Szyfrowany komunikator mesh oparty na LoRa SX1262 + Raspberry Pi Pico W
 
-1. Wykonana praca
-Utworzono klasę "wrappera" MeshRadio (pliki lora_mesh.h i lora_mesh.cpp), która hermetyzuje skomplikowaną logikę biblioteki RadioLib.
+---
 
-Zaimplementowano konstruktor klasy, który dynamicznie alokuje pamięć dla warstwy sprzętowej HAL (PicoHal), modułu (Module) oraz sterownika radia (SX1262).
+## Sesja 1 — Integracja biblioteki RadioLib z Pico SDK
+**Data:** 15.03.2026  
+**Cel:** Zintegrowanie biblioteki RadioLib (v7.0+, gałąź master) z mikrokontrolerem Raspberry Pi Pico W (C++ SDK) dla nakładki Waveshare LoRa SX1262.
 
-Zaimplementowano metodę initLoRa, która uruchamia radio ze zdefiniowanymi parametrami fali (częstotliwość, Bandwidth 125kHz, Spreading Factor 9, Coding Rate 7, Preambuła 8).
+### 1. Wykonana praca
 
-Skonfigurowano plik CMakeLists.txt do poprawnego łączenia wszystkich bibliotek pobieranych z GitHuba.
+- Zaprojektowano i utworzono klasę **MeshRadio** (pliki `lora_mesh.h` i `lora_mesh.cpp`) — "wrapper" hermetyzujący skomplikowaną logikę biblioteki RadioLib za prostym interfejsem (`initLoRa()`, `send()`, `receive()`).
+- Zaimplementowano konstruktor klasy, który dynamicznie alokuje pamięć (operator `new`) dla trzech warstw abstrakcji:
+  - `PicoHal` — warstwa sprzętowa (HAL), tłumacząca komendy RadioLib na wywołania SDK Pico (`gpio_put`, `spi_write` itp.)
+  - `Module` — warstwa pośrednia łącząca HAL z pinami sterującymi (CS, DIO1, RESET, BUSY)
+  - `SX1262` — właściwy sterownik chipa radiowego
+- Zaimplementowano metodę `initLoRa()` uruchamiającą radio z parametrami: częstotliwość 868 MHz, Bandwidth 125 kHz, Spreading Factor 9, Coding Rate 4/7, Preambuła 8, moc 22 dBm, sync word 0x44.
+- Skonfigurowano `CMakeLists.txt` z użyciem `FetchContent` do automatycznego pobierania RadioLib z GitHuba podczas budowania projektu.
 
-2. Rejestr Błędów i Rozwiązań
-Podczas konfiguracji natrafiliśmy na serię krytycznych błędów związanych ze zmianami architektonicznymi w najnowszej wersji biblioteki RadioLib:
+### 2. Rejestr błędów i rozwiązań
 
-Błąd #1: Rozjazd typów danych w konstruktorze i pliku nagłówkowym
+**Błąd #1 — Rozjazd typów danych (uint vs uint32_t)**  
+*Objaw:* Kompilator zgłaszał `this declaration has no storage class or type specifier` oraz `expected a ';'` przy definicji konstruktora w `.cpp`.  
+*Przyczyna:* Użycie skróconego typu `uint` niezgodnego między plikiem `.h` a `.cpp`. RadioLib v7+ wymusza `uint32_t` dla numerów pinów.  
+*Rozwiązanie:* Ujednolicono wszystkie typy pinów w obu plikach na `uint32_t`.
 
-Objaw: Kompilator zgłaszał błędy this declaration has no storage class or type specifier oraz expected a ';' przy definicji konstruktora w pliku .cpp.
+**Błąd #2 — Plik niewidoczny dla kompilatora (CMake)**  
+*Objaw:* IntelliSense podświetlał całą klasę na czerwono z błędami o niezdefiniowanych typach.  
+*Przyczyna:* Nowy plik `lora_mesh.cpp` nie był dodany do listy kompilacji.  
+*Rozwiązanie:* Dodano `lora_mesh.cpp` do instrukcji `add_executable` w `CMakeLists.txt` i przeładowano środowisko.
 
-Przyczyna: Użycie skróconego typu uint oraz niezgodność typów między sygnaturą w pliku .h (np. uint8_t), a plikiem .cpp. Nowa wersja RadioLib wymuszała dodatkowo użycie pełnego typu 32-bitowego dla pinów.
+**Błąd #3 — Odrzucanie klasy PicoHal (największy bloker sesji)**  
+*Objaw:* GCC wyrzucał `expected type-specifier before 'PicoHal'` oraz `PicoHal does not name a type`, mimo poprawnej ścieżki `#include`.  
+*Przyczyna:* W RadioLib v7+ plik `PicoHal.h` jest otoczony makrem `#if defined(RADIOLIB_BUILD_RPI_PICO)`. Bez ustawienia tej flagi kompilator widział plik jako pusty. Próba ładowania flagi przez plik `.h` powodowała błędy kolejności dyrektyw `#include`.  
+*Rozwiązanie:*
+  1. W `lora_mesh.h` zastosowano polimorfizm — zamiast `PicoHal*` użyto ogólnego wskaźnika `RadioLibHal* hal`, dzięki czemu nagłówek w ogóle nie musi ładować `PicoHal.h`.
+  2. W `lora_mesh.cpp` dodano na samej górze `#define RADIOLIB_BUILD_RPI_PICO 1`, a następnie w rygorystycznej kolejności: Pico SDK → RadioLib → PicoHal.h → własne nagłówki.
 
-Rozwiązanie: Ujednolicono wszystkie typy pinów w obu plikach na uint32_t.
+**Błąd #4 — Brakujące moduły sprzętowe (Fatal Error: hardware/pwm.h)**  
+*Objaw:* Błąd kompilacji wskazujący brak plików `hardware/pwm.h` i innych.  
+*Przyczyna:* `PicoHal` używa funkcji sprzętowych (PWM, timery, SPI, multicore), które nie są domyślnie linkowane w SDK Pico.  
+*Rozwiązanie:* Dodano do `target_link_libraries` w `CMakeLists.txt`: `hardware_spi`, `hardware_pwm`, `hardware_timer`, `hardware_clocks`, `pico_multicore`.
 
-Błąd #2: Plik niewidoczny dla kompilatora (CMake)
+**Status na koniec sesji:** Konfiguracja sprzętowa (HAL) oraz kompilacja zakończone sukcesem. Metoda `initLoRa()` gotowa do testów na fizycznym sprzęcie.
 
-Objaw: IntelliSense w VS Code "nie widział" bibliotek i podświetlał całą klasę na czerwono z błędami o niezdefiniowanych typach.
+---
 
-Przyczyna: Nowy plik lora_mesh.cpp nie został dodany do listy kompilacji w systemie budowania.
+## Sesja 2 — Serwer TCP / Gateway WiFi
+**Data:** 16.03.2026  
+**Cel:** Zaprojektowanie i wdrożenie serwera TCP na Pico W, przyjmującego komendy od klientów przez WiFi i przekazującego je do modułu LoRa.
 
-Rozwiązanie: Dodano lora_mesh.cpp do instrukcji add_executable w pliku CMakeLists.txt i przeładowano środowisko.
+### 1. Wykonana praca
 
-Błąd #3: Odrzucanie klasy PicoHal (Największy bloker)
+- Zaprojektowano protokół komunikacji: klient łączy się przez czyste TCP, wysyła komendy w formacie `ODBIORCA:treść` (np. `BOB:czesc`) lub komendy systemowe (`INFO`, `ALL:treść`).
+- Zaimplementowano klasę `Server_tcp` (pliki `server.h` i `server.cpp`) obsługującą:
+  - Rejestrację użytkowników (pierwsze dane od klienta = nick)
+  - Mapowanie nick → pcb (`nick_do_pcb`) i nick → ID (`nick_do_id`)
+  - Kolejkę wysyłania pakietów LoRa (`std::queue<MeshPacket>`)
+- Podpięto niskopoziomową bibliotekę sieciową lwIP (Lightweight IP) wbudowaną w Pico SDK.
+- Zaimplementowano statyczne callbacki lwIP (`on_connect`, `on_recv`) z mechanizmem `tcp_arg(pcb, this)` umożliwiającym dostęp do obiektu C++ z poziomu surowego kodu C.
+- Zaimplementowano obsługę trzech trybów wiadomości:
+  - `ALL:treść` — broadcast do wszystkich klientów lokalnych + pakiet LoRa z `dst_id=0xFF`
+  - `NICK:treść` — sprawdzenie czy odbiorca jest lokalny (bez LoRa) lub zdalny (pakiet LoRa)
+  - `INFO` — pobranie listy lokalnych użytkowników + wysłanie zapytania `INFO_REQ` przez LoRa do zdalnych węzłów
 
-Objaw: Kompilator (GCC) nieustannie wyrzucał błąd expected type-specifier before 'PicoHal' oraz PicoHal does not name a type, mimo poprawnego dołączenia ścieżki #include <hal/RPiPico/PicoHal.h>.
+### 2. Rejestr błędów i rozwiązań
 
-Przyczyna: Biblioteka RadioLib v7+ używa zaawansowanych makr preprocesora. Plik PicoHal.h był w całości otoczony instrukcją #if defined(RADIOLIB_BUILD_RPI_PICO). Bez tej flagi,
-kompilator widział plik jako pusty. Próba załadowania flagi i plików Pico poprzez plik .h blokowała kompilację przez złą kolejność dyrektyw #include.
+**Błąd #1 — Nieznane typy lwIP (err_t is undefined)**  
+*Objaw:* Kompilator nie widział podstawowych typów biblioteki sieciowej mimo `#include "lwip/tcp.h"`.  
+*Przyczyna:* Brak aktywacji sterowników WiFi w CMake oraz brak "klucza głównego" architektury w nagłówku.  
+*Rozwiązanie:* Dodano `#include "pico/cyw43_arch.h"` przed plikami lwIP w `server.h`. Dodano `pico_cyw43_arch_lwip_threadsafe_background` do `target_link_libraries`.
 
-Rozwiązanie: 1. Zastosowano polimorfizm w pliku lora_mesh.h – użyto ogólnego wskaźnika RadioLibHal* hal;, dzięki czemu plik nagłówkowy w ogóle nie musiał ładować problematycznego PicoHal.h.
-2. Zastosowano twardy override makra w pliku lora_mesh.cpp. Na samej górze dodano #define RADIOLIB_BUILD_RPI_PICO 1, a następnie w rygorystycznej kolejności załadowano SDK Pico, a po nim bibliotekę RadioLib.
+**Błąd #2 — Awaria CMake (Exit code 1) przy przejściu na Pico W**  
+*Objaw:* CMake przerywał konfigurację z błędem krytycznym.  
+*Przyczyna:* Literówka w nazwie gałęzi Git (`Master` zamiast `master`) oraz zduplikowane wpisy w `target_link_libraries`.  
+*Rozwiązanie:* Poprawiono skrypt `FetchContent`, usunięto duplikaty, jawnie ustawiono `PICO_BOARD=pico2_w`.
 
-Błąd #4: Brakujące moduły sprzętowe (Fatal Error: hardware/pwm.h)
+**Błąd #3 — Brak programu budującego Ninja**  
+*Objaw:* `CMake was unable to find a build program corresponding to "Ninja"`.  
+*Przyczyna:* Instalator rozszerzenia Pico dla VS Code na Windows nie pobrał pliku `ninja.exe`.  
+*Rozwiązanie (ręczna naprawa środowiska):* Pobrano `ninja-win.zip` z oficjalnego repozytorium GitHub. Wklejono `ninja.exe` do `.pico-sdk\\cmake\\v3.31.5\\bin\\`. Wykonano "Delete Cache and Reconfigure".
 
-Objaw: Błąd kompilacji wytykający brak plików nagłówkowych takich jak hardware/pwm.h.
+**Błąd #4 — "Histeryzujący" IntelliSense (czerwone wężyki przy sprawnym kodzie)**  
+*Objaw:* VS Code podświetlał na czerwono standardowe funkcje podczas gdy kompilator budował bez błędów.  
+*Rozwiązanie:* Usunięcie folderu `build`, "Reload Window" i pełna rekonfiguracja CMake.
 
-Przyczyna: Klasa PicoHal z biblioteki RadioLib używa funkcji sprzętowych (Timery, PWM, Multicore, SPI), które w domyślnym, "odchudzonym" środowisku SDK Pico nie są linkowane do projektu, aby oszczędzać pamięć.
+**Status na koniec sesji:** Moduł LoRa oraz serwer TCP kompilują się z sukcesem. Silnik serwera gotowy do przyjmowania połączeń.
 
-Rozwiązanie: Rozszerzono sekcję target_link_libraries w pliku CMakeLists.txt o brakujące moduły: hardware_spi, hardware_pwm, hardware_timer, hardware_clocks, pico_multicore.
+---
 
-Obecny status projektu: Konfiguracja sprzętowa (HAL) oraz kompilacja kodu zakończone 100% sukcesem. Metoda initLoRa jest gotowa do testów na fizycznym sprzęcie.
+## Sesja 3 — Access Point WiFi, DHCP i pętla główna
+**Data:** 17.03.2026  
+**Cel:** Uruchomienie Pico W jako autonomicznego punktu dostępowego WiFi z serwerem DHCP oraz zaprojektowanie pętli głównej aplikacji.
 
-Work Log - O.G.N.R (Moduł Serwera TCP / Gateway)
-Data: [16.03.2026]
-Cel: Zaprojektowanie i wdrożenie serwera TCP (Gatewaya) na mikrokontrolerze Raspberry Pi Pico 2 W (RP2350), który będzie odbierał komendy z aplikacji klienckiej przez Wi-Fi i przekazywał je do modułu LoRa.
+### 1. Wykonana praca
 
-1. Wykonana praca
-Plan Architektury: Ustalono protokół komunikacji oparty na czystym TCP. Klient (np. aplikacja na PC/telefon) łączy się z serwerem i wysyła komendy w formacie Odbiorca:[Wiadomość] (np. BOB:czesc) oraz komendy
- systemowe (np. INFO).
+- Skonfigurowano Pico W jako Access Point WiFi (`O.G.N.R.1`, hasło `123456789`, szyfrowanie WPA2) przez `cyw43_arch_enable_ap_mode()`.
+- Zintegrowano serwer DHCP z przykładów `pico-examples` (`dhcpserver.h/c`) — automatycznie rozdaje adresy IP w podsieci `192.168.4.0/24`, zakres `192.168.4.16–4.23`.
+- Ustawiono statyczny adres IP węzła na `192.168.4.1` przez `netif_set_addr()`.
+- Zaprojektowano pętlę główną `while(true)` z trzema zadaniami w każdej iteracji:
+  1. `cyw43_arch_poll()` — obsługa zdarzeń sieciowych WiFi (krytyczne: bez tego WiFi przestaje reagować)
+  2. Sprawdzenie kolejki `has_pending_packet()` — jeśli serwer TCP zebrał pakiet od klienta, wyślij go przez LoRa
+  3. `radio.receive()` — sprawdzenie pinu DIO1, jeśli LoRa odebrało pakiet, dostarcz go klientom TCP
 
-Implementacja klasy Server_tcp: Utworzono pliki server.h i server.cpp.
+### 2. Rejestr błędów i rozwiązań
 
-Integracja biblioteki lwIP: Podpięto niskopoziomową bibliotekę sieciową (Lightweight IP) wbudowaną w SDK Pico.
+**Błąd #1 — Brak `extern "C"` w dhcpserver.h**  
+*Objaw:* Błąd linkera `undefined reference to dhcp_server_init(...)` z przerobionym nazwaniem symbolu przez name mangling C++.  
+*Przyczyna:* `dhcpserver.h` napisany w C nie miał bloku `extern "C"`, przez co kompilator C++ stosował do jego funkcji name mangling — linker nie mógł dopasować symbolu do skompilowanej biblioteki C.  
+*Rozwiązanie:* Dodano blok `extern "C" { ... }` wokół deklaracji funkcji w `dhcpserver.h`. Dodano `#include <stdint.h>` dla typów `uint8_t`/`uint16_t`.
 
-Most C/C++: Zaimplementowano statyczne funkcje callback (on_connect, on_recv), które są wywoływane przez surowy kod C biblioteki lwIP. Użyto mechanizmu tcp_arg(pcb, this), aby przemycić wskaźnik do obiektu
- C++ (umożliwiając dostęp do logiki klasy z poziomu statycznych callbacków).
+**Status na koniec sesji:** Węzeł uruchamia się, rozgłasza sieć WiFi, rozdaje adresy IP klientom, przyjmuje połączenia TCP na porcie 8080. Komunikacja LoRa zainicjalizowana i gotowa.
 
-2. Rejestr Błędów i Rozwiązań
-Błąd #1: Nieznane typy lwIP (err_t is undefined)
+---
 
-Objaw: IntelliSense i kompilator nie widziały podstawowych typów biblioteki sieciowej, mimo dołączenia #include "lwip/tcp.h".
+## Sesja 4 — Szyfrowanie AES-CTR
+**Data:** 18.03.2026  
+**Cel:** Dodanie szyfrowania end-to-end do pakietów LoRa.
 
-Przyczyna: Brak aktywacji sterowników Wi-Fi dla płytki w systemie CMake oraz brak "klucza głównego" architektury w pliku nagłówkowym.
+### 1. Wykonana praca
 
-Rozwiązanie: 1. Do server.h dodano #include "pico/cyw43_arch.h" przed plikami lwIP.
-2. Do CMakeLists.txt dodano bibliotekę pico_cyw43_arch_lwip_threadsafe_background.
+- Zaimplementowano szyfrowanie i deszyfrowanie payload pakietów algorytmem **AES-128-CTR** przy użyciu biblioteki **mbedTLS** wbudowanej w Pico SDK.
+- Klucz szyfrowania (128-bitowy, 16 bajtów) przechowywany jako `static constexpr` — trafia do pamięci FLASH (nie RAM), zero kosztu podczas runtime.
+- NONCE (liczba jednorazowa) budowany z `msg_id` + `src_id` — zapewnia że ta sama treść zaszyfrowana dwukrotnie daje różne bajty w transmisji.
+- Szyfrowanie i deszyfrowanie są identyczną operacją (właściwość XOR w trybie CTR) — ta sama funkcja `mbedtls_aes_crypt_ctr()` obsługuje oba kierunki.
+- Szyfrowany jest wyłącznie `payload` — nagłówek pakietu (type, src_id, dst_id, msg_id, ttl) pozostaje jawny, bo odbiorca musi wiedzieć czy pakiet jest do niego przed odszyfrowaniem.
+- Po każdym użyciu wywoływane `mbedtls_aes_free()` — kluczowe na mikrokontrolerze z 264 KB RAM.
 
-Błąd #2: Awaria CMake (Exit code 1) przy przejściu na Pico W
+### 2. Znane ograniczenia
 
-Objaw: CMake przerywał konfigurację z krytycznym błędem, nie generując plików kompilacji.
+- NONCE oparty jedynie o `msg_id` (1 bajt = zakres 0–255) i `src_id` — po 255 wiadomościach od tego samego węzła NONCE się powtarza, co osłabia szyfrowanie. Planowane rozszerzenie NONCE o `node_id` na pozycji `[2]`.
 
-Przyczyna: Literówka w nazwie gałęzi Git dla modułu RadioLib (Master zamiast master – Git jest wrażliwy na wielkość liter) oraz zduplikowane wpisy target_link_libraries.
+**Status na koniec sesji:** Wszystkie pakiety LoRa są szyfrowane przed nadaniem i deszyfrowane po odbiorze. Komunikacja w pełni zaszyfrowana.
 
-Rozwiązanie: Poprawiono skrypt pobierający zawartość FetchContent, usunięto duplikaty oraz jawnie ustawiono architekturę płytki na pico2_w za pomocą zmiennej PICO_BOARD.
+---
 
-Błąd #3: Brak programu budującego Ninja (Fatalna awaria środowiska)
+## Sesja 5 — Testy fizyczne, debugowanie sprzętu i finalizacja
+**Data:** 19.03.2026 – 27.04.2026  
+**Cel:** Uruchomienie dwóch fizycznych węzłów (BOB i ALICE), testy end-to-end komunikacji LoRa + WiFi.
 
-Objaw: Logi z outputu pokazywały: CMake was unable to find a build program corresponding to "Ninja".
+### 1. Wykonana praca
 
-Przyczyna: Instalator rozszerzenia Raspberry Pi Pico dla VS Code w systemie Windows "zgubił" (nie pobrał) pliku wykonywalnego systemu Ninja, na którym opiera się kompilacja.
+- Wgrano firmware na dwa fizyczne węzły Pico W z nakładkami Waveshare LoRa SX1262.
+- Zaimplementowano klienta konsolowego w Pythonie do testów połączeń TCP.
+- Przeprowadzono testy wszystkich trybów komunikacji: wiadomości prywatne, broadcast `ALL`, komenda `INFO` z odpowiedzią zdalnego węzła.
+- Dodano system automatycznego przydzielania ID użytkownikom (`next_id++`) i mapowania nick ↔ ID.
+- Zaimplementowano obsługę odpowiedzi `INFO_RSP` — parsowanie formatu `NICK:ID,NICK:ID,` i zapisanie zdalnych użytkowników do lokalnej mapy.
 
-Rozwiązanie (Ręczna naprawa środowiska): Pobrano plik ninja-win.zip bezpośrednio z repozytorium GitHub twórców. Wyciągnięto plik ninja.exe i wklejono go do ukrytego folderu narzędzi 
-SDK (.pico-sdk\cmake\v3.31.5\bin\). Następnie wyczyszczono pamięć podręczną kompilatora (Delete Cache and Reconfigure).
+### 2. Rejestr błędów i rozwiązań
 
-Błąd #4: "Histeryzujący" IntelliSense (Czerwone wężyki przy 100% sprawnym kodzie)
+**Błąd #1 — Węzeł ALICE nie może nadawać (BOB działa)**  
+*Objaw:* ALICE inicjalizuje radio poprawnie i odbiera pakiety, ale przy każdym nadawaniu wyświetla `Blad wysylania wiadomosci`. BOB działa bez zarzutu.  
+*Diagnoza krok 1:* Zamiana modułów LoRa między węzłami — problem pozostaje przy tym samym Pico, nie przy module. Oba moduły LoRa sprawne.  
+*Diagnoza krok 2:* Moduł "wadliwy" bez baterii zapalił lampkę CHG (normalny objaw układu ładowania przy zasilaniu USB).  
+*Diagnoza krok 3:* Wzorzec "odbiór działa, nadawanie nie" wskazuje na niestabilne połączenie SPI przy wyższym obciążeniu — nadawanie wymaga szybkiej sekwencji komend SPI i wyższego prądu niż odbiór.  
+*Przyczyna:* Połowa goldpinów Pico (piny 22–40, prawa strona złącza) nie była przylutowana — kontakt tylko przez naciski sprężysty. Pin GP20 (DIO1, pin 26) na nieprzylutowanej stronie powodował niestabilny odbiór. Piny SPI (GP10/11/12, CS GP3) po lewej stronie były przylutowane, jednak złącze goldpin bez lutowania może tracić kontakt przy obciążeniu.  
+*Rozwiązanie:* Przylutowanie wszystkich goldpinów Pico do nakładki Waveshare.  
+*Rezultat:* Po przylutowaniu oba węzły działają poprawnie — nadawanie, odbiór, broadcast, wiadomości prywatne, komenda INFO.
 
-Objaw: Edytor kodu podświetlał na czerwono standardowe funkcje (np. std::cout lub zdefiniowane typy), podczas gdy kompilator budował plik bez błędów.
+### 3. Finalne testy end-to-end
 
-Rozwiązanie: Usunięcie całego folderu build, reset okna programu (Reload Window) i wymuszenie pełnej rekonfiguracji CMake, co zmusiło VS Code do odświeżenia ścieżek do bibliotek C++.
+Po przylutowaniu przeprowadzono kompletne testy systemu:
 
-Obecny status projektu: Moduł radia (LoRa) oraz serwer TCP kompilują się z sukcesem. Silnik serwera jest gotowy do przyjmowania połączeń sieciowych.
+| Test | Wynik |
+|---|---|
+| Rejestracja użytkownika (BOB, ALICE) | ✅ |
+| Wiadomość prywatna lokalnie (w obrębie węzła) | ✅ |
+| Wiadomość prywatna przez LoRa (między węzłami) | ✅ |
+| Broadcast `ALL:treść` do wszystkich | ✅ |
+| Komenda `INFO` — lista lokalna + zdalna przez LoRa | ✅ |
+| Szyfrowanie AES-CTR (weryfikacja przez analizę bajtów) | ✅ |
+| Stabilna praca po resecie zasilania | ✅ |
 
-3. Plan na kolejną sesję
-Aktywacja modułu Wi-Fi (układu CYW43) z poziomu funkcji main().
+**Status końcowy projektu:** System działa w pełni. Dwa węzły komunikują się przez LoRa w zaszyfrowanym protokole mesh. Klienci WiFi łączą się z serwisem przez TCP i mogą wysyłać wiadomości prywatne i grupowe między węzłami.
 
-Stworzenie pętli głównej parsującej tekst (INFO, oddzielanie odbiorcy od treści).
+---
 
-Dodanie mechanizmu szyfrowania przesyłanego tekstu.
+## Sesja 6 — Dokumentacja kodu
+**Data:** 27.04.2026  
+**Cel:** Dodanie szczegółowych komentarzy do całego kodu, zrozumienie każdej decyzji architektonicznej, przygotowanie do publikacji na GitHubie.
+
+### 1. Wykonana praca
+
+- Przeanalizowano i okomentowano wszystkie pliki projektu: `main.cpp`, `lora_mesh.h`, `lora_mesh.cpp`, `server.h`, `server.cpp`.
+- Wyjaśniono mechanizmy niskopoziomowe: magistrala SPI, tryb AES-CTR, callbacki lwIP, polimorfizm HAL, `volatile`, `constexpr static`, name mangling C++.
+- Zidentyfikowano i poprawiono nieścisłości w komentarzach (rozróżnienie wskaźnik/obiekt, konstruktor/inicjalizacja, `tcp_pcb` jako połączenie sieciowe a nie płytka fizyczna).
+
+---
+
+## Architektura systemu
+
+```
+[Klient PC]──TCP──[Pico W węzeł 1 (BOB)]──LoRa 868MHz──[Pico W węzeł 2 (ALICE)]──TCP──[Klient PC]
+                   192.168.4.1:8080                      192.168.4.1:8080
+                   WiFi: O.G.N.R.1                       WiFi: O.G.N.R.2
+```
+
+**Stos technologiczny:**
+- Mikrokontroler: Raspberry Pi Pico W (RP2040 / RP2350)
+- Radio: Semtech SX1262, 868 MHz, nakładka Waveshare
+- Biblioteka radiowa: RadioLib v7+ (PicoHal)
+- Stos sieciowy: lwIP (Lightweight IP) wbudowany w Pico SDK
+- Szyfrowanie: mbedTLS AES-128-CTR
+- Język: C++17, Pico SDK, CMake
+
+**Struktura plików:**
+```
+OGNR/
+├── main.cpp           — pętla główna, inicjalizacja WiFi AP, DHCP, LoRa, Server
+├── lora_mesh.h        — interfejs klasy MeshRadio i struktura MeshPacket
+├── lora_mesh.cpp      — implementacja: inicjalizacja, send, receive, AES-CTR
+├── server.h           — interfejs klasy Server_tcp
+├── server.cpp         — implementacja: callbacki lwIP, logika wiadomości, kolejka
+├── dhcpserver.h/c     — serwer DHCP (z pico-examples, zmodyfikowany extern "C")
+├── Client.py          — klient konsolowy do testów (Python)
+└── CMakeLists.txt     — konfiguracja budowania, FetchContent dla RadioLib
+```
+"""

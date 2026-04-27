@@ -2,20 +2,21 @@
 
 namespace server{
 
-    Server_tcp::Server_tcp(lora_mesh::MeshRadio* radio)//konstruktor upewniamy sie ze server_pcb jest pusty 
+    Server_tcp::Server_tcp(lora_mesh::MeshRadio* radio)//konstruktor upewniamy sie ze server_pcb jest pusty i przypisujemy obiekt radia zmiennej radio 
     :server_pcb(nullptr),radio(radio)
     {
+        
     }
     
     bool Server_tcp::start_server(uint32_t port){
         std::cout<<"uruchamianie serwera tcp na porcie"<<port<<"..."<<std::endl;
-        server_pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+        server_pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);//stworzenie bloku kontrolnego PCB(protocol control block) to struktura w IwIP ktora reprezentuje jedno gniazdo sieciowe, akceptuje IPv4 i IPv6
         if (server_pcb == nullptr){
             std::cout << "[BLAD] Brak pamieci na serwer TCP!" << std::endl;
             return false;
         }
 
-        err_t err = tcp_bind(server_pcb,IP_ANY_TYPE,port);//podpinamy serwer pod dowolny adress IP i nasz port 8080
+        err_t err = tcp_bind(server_pcb,IP_ANY_TYPE,port);//wiąże gniazdo z adresem  portem 
         if (err != ERR_OK) {
             std::cout << "[BLAD] Port " << port << " jest zajety lub niedostepny." << std::endl;
             return false;
@@ -30,13 +31,13 @@ namespace server{
         return true;
     }
     void Server_tcp::deliver_to_clients(lora_mesh::MeshPacket& packet) {
-        if (packet.type == lora_mesh::PACKET_TYPE_INFO_REQ) {
+        if (packet.type == lora_mesh::PACKET_TYPE_INFO_REQ) {// sprawdzenie jakiego typu jest odebrany pakiet
             // Ktoś pyta o naszą listę — odpowiedz
             std::string lista = "";
-            for (const auto& para : nick_do_id) {
-                lista += para.first + ":" + std::to_string(para.second) + ",";
+            for (const auto& para : nick_do_id) {// petla przechodzaca po mapie nicki_do_id i tworzaca z nich liste urzytkownikow na naszym węźle 
+                lista += para.first + ":" + std::to_string(para.second) + ",";//para.first = nick para.second = id 
             }
-
+            // przygotowanie pakietu do wysłania 
             lora_mesh::MeshPacket rsp = {};
             rsp.type = lora_mesh::PACKET_TYPE_INFO_RSP;
             rsp.src_id = node_id;
@@ -44,15 +45,15 @@ namespace server{
             rsp.msg_id = ++msg_counter;
             rsp.time_to_live = 3;
             rsp.payload_len = lista.length();
-            memcpy(rsp.payload, lista.c_str(), rsp.payload_len);
+            memcpy(rsp.payload, lista.c_str(), rsp.payload_len);// zamiana pakietu na c_string czyli na surowe bajty 
 
-            radio->send(rsp);
+            radio->send(rsp);//przekazanie pakietu do wysyłki 
             return;
         }
 
         if (packet.type == lora_mesh::PACKET_TYPE_INFO_RSP) {
             // Dostaliśmy listę od zdalnego węzła — parsuj i zapisz
-            std::string tresc((char*)packet.payload, packet.payload_len);
+            std::string tresc((char*)packet.payload, packet.payload_len);// zamiana z c_string na standardowy string aby bezproblemowo wyswietlic liste urzytkownikow 
             std::string wynik = "[SYSTEM] uzytkownicy zdalni (wez." 
                             + std::to_string(packet.src_id) + "): " + tresc;
 
@@ -79,7 +80,7 @@ namespace server{
             return;
         }
 
-        // Zwykła wiadomość — dotychczasowa logika
+        // Zwykła wiadomość
         std::string tresc((char*)packet.payload, packet.payload_len);
         std::string wiadomosc = "[src:" + std::to_string(packet.src_id) + "] " + tresc;
 
@@ -100,12 +101,13 @@ namespace server{
     // --- CALLBACKI LwIP (Wywoływane automatycznie przez system w tle) ---
 
     err_t Server_tcp::on_connect(void *arg, struct tcp_pcb *newpcb, err_t err) {
+        //IwIP wywoluje te funkcje automatycznie gdy klient sie łączy 
         if (err != ERR_OK || newpcb == nullptr) {
             return ERR_VAL;
         }
         std::cout<<"[TCP] Nowy uzytkownik polaczyl sie z serwerem!"<< std::endl;
 
-        // Przekazujemy wskaźnik 'this' dalej, do połączenia z tym konkretnym klientem
+        // Przekazujemy wskaźnik 'this' dalej, do połączenia z tym konkretnym klientem, każde połączenie z klientem musi znać nasz obiekt serwera aby moc wywoływać jego metody 
         tcp_arg(newpcb, arg);
 
         // Ustawiamy, co ma się stać, gdy ten klient coś do nas napisze
@@ -151,18 +153,18 @@ namespace server{
 
     void Server_tcp::process_incoming_data(std::string data,struct tcp_pcb* client_pcb) {
         std::cout << "Serwer przetwarza dane: " << data << std::endl;
-        data.erase(data.find_last_not_of("\n\r\t")+1);
+        data.erase(data.find_last_not_of("\n\r\t")+1);// usuwamy znaki konca lini i inne "dodatki" bez tego porownania stringow do komend by nie działały 
 
         if (data.empty()){
             std::cout<<"brak wiadomosci"<<std::endl;
             return;
         }
 
-        if (klienci[client_pcb]==""){
-            klienci[client_pcb] = data;
+        if (klienci[client_pcb]==""){// jezeli klient nie ma jeszcze wpisanego nicku do swojego PCB to jego pierwsza wiadomość jest nickiem 
+            klienci[client_pcb] = data;//pcb = nick
             std::cout<<"[SYSTEM] zalogowano nowego uzytkownika:"<<data<<std::endl;
-            nick_do_pcb[data] = client_pcb;
-            nick_do_id[data] = next_id++;
+            nick_do_pcb[data] = client_pcb;//nick = pcb (do wiadomosci prywatnych)
+            nick_do_id[data] = next_id++;  //nick = id (do pakietow lora)
             send_to_client(client_pcb, "[SYSTEM] Witaj " + data + "! Zalogowano pomyslnie w sieci LoRa.");
             return;
         }
@@ -171,7 +173,7 @@ namespace server{
 
         std::string command;
         std::string message;
-        int pos = data.find(':');
+        int pos = data.find(':');//parser wiadomosci na KOMENDA:[Treść]
         if (pos != std::string::npos) {
             command = data.substr(0, pos);
             message = data.substr(pos + 1);
@@ -187,11 +189,12 @@ namespace server{
                 if (!para.second.empty()) lista += para.second + ",";
             }
             send_to_client(client_pcb, lista);
-
+            //send_to_client(client_pcb, "[SYSTEM] czekam na odpowiedz zdalnych wezlow...");
             // 2. Zapamiętaj kto pytał (żeby odesłać odpowiedź zdalną gdy przyjdzie)
             info_requester_pcb = client_pcb;
 
             // 3. Wyślij INFO_REQ przez radio
+            
             lora_mesh::MeshPacket req = {};
             req.type = lora_mesh::PACKET_TYPE_INFO_REQ;
             req.src_id = node_id;
@@ -200,11 +203,20 @@ namespace server{
             req.time_to_live = 3;
             req.payload_len = 0; // brak treści — samo zapytanie
 
-            radio->send(req);
+            kolejka_wysylania.push(req);
+            
             return;
         }
         else if(command == "ALL"){
             std::cout<<"wysylanie wiadomosci do wszystkich"<<std::endl;
+
+            std::string wiadomosc ="["+ nadawca + "]" + message;
+            for(const auto& para:klienci){
+                if(!para.second.empty()){
+                    send_to_client(para.first,wiadomosc);
+                }
+            }
+
             lora_mesh::MeshPacket packet={};
             msg_counter++;
             packet.src_id = node_id;
@@ -216,10 +228,21 @@ namespace server{
             packet.payload_len = tresc.length();
             memcpy(packet.payload,tresc.c_str(),packet.payload_len);
 
-            radio->send(packet);
+            kolejka_wysylania.push(packet);
         }
         else{
             std::cout<<"prywatna wiadomosc do"<<command<<std::endl;
+            
+            auto it_local = nick_do_pcb.find(command);
+            if(it_local != nick_do_pcb.end()){
+                //odbiorca jest lokalny 
+                std::string wiadomosc = "[" + nadawca + "]" + message;
+                send_to_client(it_local->second,wiadomosc);
+                printf("[LOCAL] wiadomosc do %s do %s dostarczona lokalnie\n",nadawca.c_str(),command.c_str());
+                return ;
+            }
+
+
             // Sprawdź czy odbiorca jest znany (lokalnie lub przez sieć)
             auto it = nick_do_id.find(command);
             uint8_t dst = (it != nick_do_id.end()) ? it->second : 0xFE; // 0xFE = nieznany
@@ -235,7 +258,7 @@ namespace server{
             packet.payload_len = tresc.length();
             memcpy(packet.payload, tresc.c_str(), packet.payload_len);
 
-            radio->send(packet);
+            kolejka_wysylania.push(packet);
         }
     
 

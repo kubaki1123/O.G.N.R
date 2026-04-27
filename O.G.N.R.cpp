@@ -43,34 +43,42 @@ int main()
     // gpio_set_dir i gpio_put konfiguruja pin CS domyslnmie ustawiaja na nim stan wysoki mówiący "Module LoRa narazie nic od ciebie nie chce mozesz spac"
    
     
-    cyw43_arch_enable_ap_mode("O.G.N.R.1","123456789",CYW43_AUTH_WPA2_MIXED_PSK);// uruchamia mobilny access point z nazwa sieci O.G.N.R.1 i hasłem 123456789
-    ip4_addr_t gw, mask;
+    cyw43_arch_enable_ap_mode("O.G.N.R.1","123456789",CYW43_AUTH_WPA2_MIXED_PSK);// uruchamia mobilny access point z nazwa sieci O.G.N.R.1 i hasłem 123456789 (zmienic nazwe sieci przed wgraniem na nowy uklad)
+    ip4_addr_t gw, mask;        //deklaracja zmiennych dla maski sieci i adresu bramy 
     IP4_ADDR(&gw, 192, 168, 4, 1);
     IP4_ADDR(&mask, 255, 255, 255, 0);
 
-    dhcp_server_t dhcp_server;
-    dhcp_server_init(&dhcp_server, &gw, &mask);
+    dhcp_server_t dhcp_server;      //deklaracja serwera dhcp z pico_examples 
+    dhcp_server_init(&dhcp_server, &gw, &mask);//inicjalizacja serwera
     printf("Serwer DHCP uruchomiony\n");
 
     ip4_addr_t ip;
     IP4_ADDR(&ip, 192, 168, 4, 1);
-    netif_set_addr(netif_default, &ip, &mask, &gw);
+    netif_set_addr(netif_default, &ip, &mask, &gw);     //ustawianie sieci 
     printf("Access Point O.G.N.R.1 został uruchomiony\n");
 
 
-    lora_mesh::MeshRadio radio(PIN_CS, PIN_DIO1, PIN_RESET, PIN_BUSY);
-    server::Server_tcp server(&radio); 
+    lora_mesh::MeshRadio radio(PIN_CS, PIN_DIO1, PIN_RESET, PIN_BUSY);      //stworzenie obiektu radia przypisanie pinow 
+    server::Server_tcp server(&radio);      // inicjalizacja serwera 
 
-    radio.initLoRa(868.0,22,0x44);
-    server.start_server(8080);
+    bool radio_ok = radio.initLoRa(868.0, 22, 0x44);// inicjalizację sprzętu LoRa (częstotliwość 868MHz, moc 22dBm, sync word 0x44) i zwraca true false
+    if (!radio_ok) {
+        printf("[BLAD] Radio nie zainicjalizowane! Sprawdz polaczenia SPI.\n");
+        while(true) { sleep_ms(1000); }
+    }
+    server.start_server(8080);//rozpoczecie pracy serwera na porcie 8080
 
-    while (true) {
-        cyw43_arch_poll();
-        lora_mesh::MeshPacket packet = radio.receive();
-        if (packet.payload_len > 0|| packet.type!=0){
+    while (true) {      //glowna petla aplikacji odpowiedzialna za dzialanie 
+        cyw43_arch_poll();//oddanie chwili czasu sterownikowi wifi zeby mogl obsluzyc zdarzenia sieciowe
+        if (server.has_pending_packet()) {  // funkcja sprawdzajaca czy w kolejce sa pekiety które nie zostaly wyslane jezeli tak sciaga pakiet z kolejki i wysyla
+            lora_mesh::MeshPacket pkt = server.pop_packet();
+            radio.send(pkt);
+        }
+        lora_mesh::MeshPacket packet = radio.receive();//  sprawdza pin DIO1 — jeśli LoRa odebrało pakiet, odczytuje go jeśli nic nie przyszło, zwraca pusty pakiet {}
+        if (packet.payload_len > 0|| packet.type!=0){  //filtr pustych pakietow 
             printf("[LoRa] Odebrano pakiet type:%d src_id:%d\n", packet.type, packet.src_id);
             server.deliver_to_clients(packet);
         }
-        sleep_ms(10);
+        sleep_ms(1);
     }   
 }

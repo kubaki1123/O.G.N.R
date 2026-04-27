@@ -18,9 +18,9 @@ namespace lora_mesh {
         uint8_t payload[215]; 
     };
 
-    constexpr uint8_t PACKET_TYPE_MSG      = 0;
-    constexpr uint8_t PACKET_TYPE_INFO_REQ = 1;
-    constexpr uint8_t PACKET_TYPE_INFO_RSP = 2;
+    constexpr uint8_t PACKET_TYPE_MSG      = 0;//pakiet typu wiadomość
+    constexpr uint8_t PACKET_TYPE_INFO_REQ = 1;// pakiet typu zapytanie 
+    constexpr uint8_t PACKET_TYPE_INFO_RSP = 2;//pakiet typu odpowiedz
     // Klasa MeshRadio to nasz "wrapper" (opakowanie) na skomplikowaną bibliotekę RadioLib.
     class MeshRadio {
         public:
@@ -64,7 +64,7 @@ namespace lora_mesh {
                 0x3D,0xAD,0x37,0x2B,0xCF,0xFF,0x2A,0x4F,0xAA,0xFB,0x23,0xFC,0x98,0xFA,0x4F,0x90
             };
 
-            
+            //funkcje szyfrujace i deszyfrujace pakiety
             void encrypt_payload(uint8_t* payload, size_t len, uint8_t msg_id, uint8_t src_id);
             void decrypt_payload(uint8_t* payload, size_t len, uint8_t msg_id, uint8_t src_id);
     };
