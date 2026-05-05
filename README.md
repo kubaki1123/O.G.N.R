@@ -54,8 +54,6 @@ Biblioteki pobierane automatycznie przez CMake (`FetchContent`):
 ```bash
 git clone https://github.com/kubaki1123/OGNR.git
 cd OGNR
-
-git submodule init
 ```
 
 ### 2. Skonfiguruj ID węzła
